@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 #[derive(Parser)]
-#[command(name = "OmniRuntime", version = "1.0", about = "Universal Meta-Compiler & VM")]
+#[command(name = "OmniRuntime", version = "2.0")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -12,8 +12,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run a script or source file with version check
+    /// Run any language or hybrid scripts
     Run { file: String },
+    /// Check and install missing compilers
+    Setup,
 }
 
 fn main() {
@@ -22,63 +24,57 @@ fn main() {
     match &cli.command {
         Commands::Run { file } => {
             if !Path::new(file).exists() {
-                println!("{} {} not found!", "✘".red(), file);
+                println!("{} File not found!", "✘".red());
                 return;
             }
-            process_file(file);
+            universal_executor(file);
+        }
+        Commands::Setup => {
+            run_setup();
         }
     }
 }
 
-fn check_version(cmd: &str) -> Option<String> {
-    let output = Command::new(cmd)
-        .arg("--version")
-        .stdout(Stdio::piped())
-        .output();
-
-    match output {
-        Ok(out) => Some(String::from_utf8_lossy(&out.stdout).trim().to_string()),
-        Err(_) => None,
-    }
-}
-
-fn process_file(file: &str) {
+fn universal_executor(file: &str) {
     let ext = Path::new(file).extension().and_then(|s| s.to_str()).unwrap_or("");
-    
+    println!("{} {} Omni-Bridge identifying engine...", "🚀".cyan(), "OmniRuntime:".bold());
+
     match ext {
         "py" => {
-            match check_version("python3") {
-                Some(ver) => {
-                    println!("{} Using: {}", "ℹ".blue(), ver.cyan());
-                    run_cmd("python3", vec![file]);
-                }
-                None => println!("{} Python3 is not installed!", "✘".red()),
-            }
+            println!("{} Logic: Python Interpreter", "◆".yellow());
+            run_cmd("python3", vec![file]);
         }
         "rs" => {
-            match check_version("rustc") {
-                Some(ver) => {
-                    println!("{} Using: {}", "ℹ".blue(), ver.cyan());
-                    if run_cmd("rustc", vec![file, "-o", "temp_bin"]) {
-                        run_cmd("./temp_bin", vec![]);
-                    }
-                }
-                None => println!("{} Rust compiler (rustc) not found!", "✘".red()),
+            println!("{} Logic: Rust Native Compiler", "◆".orange());
+            if run_cmd("rustc", vec![file, "-o", "temp_bin"]) {
+                run_cmd("./temp_bin", vec![]);
             }
         }
         "cpp" | "c" => {
+            println!("{} Logic: LLVM/Clang Backend", "◆".blue());
             let compiler = if ext == "cpp" { "clang++" } else { "clang" };
-            match check_version(compiler) {
-                Some(ver) => {
-                    println!("{} Using: {}", "ℹ".blue(), ver.cyan());
-                    if run_cmd(compiler, vec![file, "-o", "temp_bin"]) {
-                        run_cmd("./temp_bin", vec![]);
-                    }
-                }
-                None => println!("{} {} not found!", "✘".red(), compiler),
+            if run_cmd(compiler, vec![file, "-o", "temp_bin"]) {
+                run_cmd("./temp_bin", vec![]);
             }
         }
-        _ => println!("{} Unknown file type: .{}", "✘".red(), ext),
+        "go" => {
+            println!("{} Logic: Go Runtime", "◆".cyan());
+            run_cmd("go", vec!["run", file]);
+        }
+        _ => println!("{} Unknown language extension: .{}", "✘".red(), ext),
+    }
+}
+
+fn run_setup() {
+    let tools = vec!["python3", "rustc", "clang++", "go"];
+    println!("{} Checking system dependencies...", "🔍".blue());
+
+    for tool in tools {
+        let check = Command::new(tool).arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status();
+        match check {
+            Ok(_) => println!("{} {} is already installed.", "✔".green(), tool),
+            Err(_) => println!("{} {} is MISSING!", "✘".red(), tool),
+        }
     }
 }
 
@@ -87,8 +83,8 @@ fn run_cmd(cmd: &str, args: Vec<&str>) -> bool {
     match status {
         Ok(s) => s.success(),
         Err(e) => {
-            println!("{} Failed: {}", "✘".red(), e);
+            println!("{} Error: {}", "✘".red(), e);
             false
         }
     }
-                                                               }
+}
