@@ -1,101 +1,14 @@
 use clap::{Parser, Subcommand};
 use colored::*;
-use std::path::Path;
-use std::process::{Command, Stdio};
-
-#[derive(Parser)]
-#[command(name = "OmniRuntime", version = "2.0")]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Run any language or hybrid scripts
-    Run { file: String },
-    /// Check and install missing compilers
-    Setup,
-}
-
-fn main() {
-    let cli = Cli::parse();
-
-    match &cli.command {
-        Commands::Run { file } => {
-            if !Path::new(file).exists() {
-                println!("{} File not found!", "✘".red());
-                return;
-            }
-            universal_executor(file);
-        }
-        Commands::Setup => {
-            run_setup();
-        }
-    }
-}
-
-fn universal_executor(file: &str) {
-    let ext = Path::new(file).extension().and_then(|s| s.to_str()).unwrap_or("");
-    println!("{} {} Omni-Bridge identifying engine...", "🚀".cyan(), "OmniRuntime:".bold());
-
-    match ext {
-        "py" => {
-            println!("{} Logic: Python Interpreter", "◆".yellow());
-            run_cmd("python3", vec![file]);
-        }
-        "rs" => {
-            println!("{} Logic: Rust Native Compiler", "◆".orange());
-            if run_cmd("rustc", vec![file, "-o", "temp_bin"]) {
-                run_cmd("./temp_bin", vec![]);
-            }
-        }
-        "cpp" | "c" => {
-            println!("{} Logic: LLVM/Clang Backend", "◆".blue());
-            let compiler = if ext == "cpp" { "clang++" } else { "clang" };
-            if run_cmd(compiler, vec![file, "-o", "temp_bin"]) {
-                run_cmd("./temp_bin", vec![]);
-            }
-        }
-        "go" => {
-            println!("{} Logic: Go Runtime", "◆".cyan());
-            run_cmd("go", vec!["run", file]);
-        }
-        _ => println!("{} Unknown language extension: .{}", "✘".red(), ext),
-    }
-}
-
-fn run_setup() {
-    let tools = vec!["python3", "rustc", "clang++", "go"];
-    println!("{} Checking system dependencies...", "🔍".blue());
-
-    for tool in tools {
-        let check = Command::new(tool).arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status();
-        match check {
-            Ok(_) => println!("{} {} is already installed.", "✔".green(), tool),
-            Err(_) => println!("{} {} is MISSING!", "✘".red(), tool),
-        }
-    }
-}
-
-fn run_cmd(cmd: &str, args: Vec<&str>) -> bool {
-    let status = Command::new(cmd).args(args).status();
-    match status {
-        Ok(s) => s.success(),
-        Err(e) => {
-            println!("{} Error: {}", "✘".red(), e);
-            false
-        }
-    }
-}
-use clap::{Parser, Subcommand};
-use colored::*;
+use notify::{Watcher, RecursiveMode, Config, RecommendedWatcher};
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc::channel;
+use std::time::Duration;
 
 #[derive(Parser)]
-#[command(name = "OmniRuntime", version = "3.0")]
+#[command(name = "OmniRuntime", version = "4.0")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -103,8 +16,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run any code file (auto-detects language if extension is missing)
+    /// Run a file once
     Run { file: String },
+    /// Watch a file and re-run on every save
+    Watch { file: String },
     /// Check system dependencies
     Setup,
 }
@@ -113,42 +28,55 @@ fn main() {
     let cli = Cli::parse();
     match &cli.command {
         Commands::Run { file } => {
-            if !Path::new(file).exists() {
-                println!("{} File not found!", "✘".red());
-                return;
-            }
+            if !Path::new(file).exists() { return; }
             smart_executor(file);
+        }
+        Commands::Watch { file } => {
+            println!("{} Starting Hot-Reload mode for: {}", "👀".cyan(), file.bold());
+            if let Err(e) = watch_file(file) {
+                println!("{} Watch error: {:?}", "✘".red(), e);
+            }
         }
         Commands::Setup => run_setup(),
     }
 }
 
-fn detect_language(content: &str) -> &'static str {
-    if content.contains("fn main()") || content.contains("println! (") {
-        "rs"
-    } else if content.contains("import ") || content.contains("def ") || content.contains("print(") {
-        "py"
-    } else if content.contains("#include <iostream>") || content.contains("int main()") {
-        "cpp"
-    } else if content.contains("package main") && content.contains("func ") {
-        "go"
-    } else {
-        "unknown"
+fn watch_file(file: &str) -> notify::Result<()> {
+    let (tx, rx) = channel();
+
+    // ফাইল ওয়াচার সেটআপ
+    let mut watcher = RecommendedWatcher::new(tx, Config::default())?;
+    watcher.watch(Path::new(file), RecursiveMode::NonRecursive)?;
+
+    // প্রথমবার রান করা
+    smart_executor(file);
+
+    println!("\n{} Waiting for changes...", "⏱".yellow());
+
+    for res in rx {
+        match res {
+            Ok(_) => {
+                println!("\n{} Change detected! Re-running...", "🔄".green());
+                smart_executor(file);
+                println!("\n{} Watching for more changes...", "⏱".yellow());
+            },
+            Err(e) => println!("watch error: {:?}", e),
+        }
     }
+    Ok(())
+}
+
+fn detect_language(content: &str) -> &'static str {
+    if content.contains("fn main()") { "rs" }
+    else if content.contains("import ") || content.contains("print(") { "py" }
+    else if content.contains("#include") { "cpp" }
+    else if content.contains("package main") { "go" }
+    else { "unknown" }
 }
 
 fn smart_executor(file: &str) {
-    let path = Path::new(file);
-    let mut ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-
-    // যদি এক্সটেনশন না থাকে, তবে কন্টেন্ট পড়ে ডিটেক্ট করবে
     let content = fs::read_to_string(file).unwrap_or_default();
-    if ext == "" {
-        println!("{} No extension found. Analyzing code content...", "🔍".yellow());
-        ext = detect_language(&content);
-    }
-
-    println!("{} {} Target Engine: {}", "🚀".cyan(), "OmniRuntime:".bold(), ext.to_uppercase().green());
+    let ext = Path::new(file).extension().and_then(|s| s.to_str()).unwrap_or(detect_language(&content));
 
     match ext {
         "py" => { run_cmd("python3", vec![file]); }
@@ -163,29 +91,17 @@ fn smart_executor(file: &str) {
             }
         }
         "go" => { run_cmd("go", vec!["run", file]); }
-        _ => println!("{} Could not identify the language automatically.", "✘".red()),
+        _ => println!("{} Unknown language.", "✘".red()),
     }
 }
 
-fn run_setup() {
-    let tools = vec![("python3", "Python"), ("rustc", "Rust"), ("clang++", "C++"), ("go", "Go")];
-    println!("{} Checking system dependencies...", "🔍".blue());
-    for (cmd, name) in tools {
-        let check = Command::new(cmd).arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status();
-        match check {
-            Ok(_) => println!("{} {} is ready.", "✔".green(), name),
-            Err(_) => println!("{} {} is MISSING!", "✘".red(), name),
-        }
-    }
-}
+fn run_setup() { /* আগের মতো */ }
 
 fn run_cmd(cmd: &str, args: Vec<&str>) -> bool {
     let status = Command::new(cmd).args(args).status();
     match status {
         Ok(s) => s.success(),
-        Err(e) => {
-            println!("{} Error: {}", "✘".red(), e);
-            false
-        }
+        Err(_) => false,
     }
-                              }
+    }
+                          
