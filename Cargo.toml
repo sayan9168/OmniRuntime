@@ -1,0 +1,13 @@
+[package]
+name = "omni-runtime"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sayan M <sayan9168>"]
+description = "Universal Meta-Compiler and VM for Cross-Language Execution"
+
+[dependencies]
+clap = { version = "4.0", features = ["derive"] } # CLI arguments
+colored = "2.0"                                  # Terminal colors
+inkwell = { version = "0.2.0", features = ["llvm15-0"] } # LLVM Bridge
+pyo3 = { version = "0.20", features = ["auto-initialize"] } # Python Integration
+walkdir = "2.3"                                 # File management
