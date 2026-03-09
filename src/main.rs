@@ -1,11 +1,10 @@
 use clap::{Parser, Subcommand};
 use colored::*;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 #[derive(Parser)]
-#[command(name = "OmniRuntime")]
-#[command(about = "Universal Meta-Compiler & VM", long_about = None)]
+#[command(name = "OmniRuntime", version = "1.0", about = "Universal Meta-Compiler & VM")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -13,10 +12,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run a script or source file (Python, Rust, C++, etc.)
+    /// Run a script or source file with version check
     Run { file: String },
-    /// Build a project into a standalone binary
-    Build { file: String },
 }
 
 fn main() {
@@ -24,47 +21,74 @@ fn main() {
 
     match &cli.command {
         Commands::Run { file } => {
-            run_file(file);
-        }
-        Commands::Build { file } => {
-            println!("{} Building {}...", "●".blue(), file);
-            // Build logic using LLVM would go here
+            if !Path::new(file).exists() {
+                println!("{} {} not found!", "✘".red(), file);
+                return;
+            }
+            process_file(file);
         }
     }
 }
 
-fn run_file(file: &str) {
-    let path = Path::new(file);
-    let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+fn check_version(cmd: &str) -> Option<String> {
+    let output = Command::new(cmd)
+        .arg("--version")
+        .stdout(Stdio::piped())
+        .output();
 
-    println!("{} Detecting environment for: .{}", "✔".green(), extension);
+    match output {
+        Ok(out) => Some(String::from_utf8_lossy(&out.stdout).trim().to_string()),
+        Err(_) => None,
+    }
+}
 
-    match extension {
+fn process_file(file: &str) {
+    let ext = Path::new(file).extension().and_then(|s| s.to_str()).unwrap_or("");
+    
+    match ext {
         "py" => {
-            println!("{} Executing Python Script...", "➜".yellow());
-            let status = Command::new("python3").arg(file).status();
-            check_status(status);
+            match check_version("python3") {
+                Some(ver) => {
+                    println!("{} Using: {}", "ℹ".blue(), ver.cyan());
+                    run_cmd("python3", vec![file]);
+                }
+                None => println!("{} Python3 is not installed!", "✘".red()),
+            }
         }
         "rs" => {
-            println!("{} Compiling and Running Rust...", "➜".yellow());
-            let status = Command::new("rustc").arg(file).arg("-o").arg("temp_bin").status();
-            if status.is_ok() {
-                let _ = Command::new("./temp_bin").status();
+            match check_version("rustc") {
+                Some(ver) => {
+                    println!("{} Using: {}", "ℹ".blue(), ver.cyan());
+                    if run_cmd("rustc", vec![file, "-o", "temp_bin"]) {
+                        run_cmd("./temp_bin", vec![]);
+                    }
+                }
+                None => println!("{} Rust compiler (rustc) not found!", "✘".red()),
             }
         }
         "cpp" | "c" => {
-            println!("{} Running C++ via Clang/LLVM JIT...", "➜".yellow());
-            let status = Command::new("clang++").arg(file).arg("-o").arg("temp_bin").status();
-             if status.is_ok() {
-                let _ = Command::new("./temp_bin").status();
+            let compiler = if ext == "cpp" { "clang++" } else { "clang" };
+            match check_version(compiler) {
+                Some(ver) => {
+                    println!("{} Using: {}", "ℹ".blue(), ver.cyan());
+                    if run_cmd(compiler, vec![file, "-o", "temp_bin"]) {
+                        run_cmd("./temp_bin", vec![]);
+                    }
+                }
+                None => println!("{} {} not found!", "✘".red(), compiler),
             }
         }
-        _ => println!("{} Unsupported file extension: .{}", "✘".red(), extension),
+        _ => println!("{} Unknown file type: .{}", "✘".red(), ext),
     }
 }
 
-fn check_status(status: std::io::Result<std::process::ExitStatus>) {
-    if let Err(e) = status {
-        println!("{} Error: {}", "✘".red(), e);
+fn run_cmd(cmd: &str, args: Vec<&str>) -> bool {
+    let status = Command::new(cmd).args(args).status();
+    match status {
+        Ok(s) => s.success(),
+        Err(e) => {
+            println!("{} Failed: {}", "✘".red(), e);
+            false
+        }
     }
-}
+                                                               }
